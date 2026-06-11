@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tic Tac Toe Online - 2 Player</title>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
     <style>
         * {
             margin: 0;
@@ -92,10 +94,12 @@
             display: flex;
             gap: 10px;
             margin-top: 20px;
+            flex-wrap: wrap;
         }
 
         .btn {
             flex: 1;
+            min-width: 120px;
             padding: 12px 20px;
             font-size: 1em;
             border: none;
@@ -261,6 +265,7 @@
             gap: 10px;
             justify-content: center;
             margin-top: 20px;
+            flex-wrap: wrap;
         }
 
         .waiting-indicator {
@@ -308,6 +313,15 @@
             margin: 8px 0;
         }
 
+        .error-message {
+            background: #ffe0e0;
+            color: #c00;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            display: none;
+        }
+
         @media (max-width: 480px) {
             .board {
                 grid-template-columns: repeat(3, 80px);
@@ -328,6 +342,12 @@
             .container {
                 padding: 20px;
             }
+
+            .btn {
+                min-width: 100px;
+                padding: 10px 15px;
+                font-size: 0.9em;
+            }
         }
     </style>
 </head>
@@ -339,6 +359,8 @@
 
             <div class="setup-content">
                 <p>Play with your friend online!</p>
+
+                <div class="error-message" id="errorMessage"></div>
 
                 <div class="input-group">
                     <label for="playerName">Your Name:</label>
@@ -418,9 +440,20 @@
     </div>
 
     <script>
-        // Using a simple backend - FirebaseDB or local storage
-        // For now, using localStorage with unique game codes
-        
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJF_KRzF_kL8hQmN6pQz-vZ7mK9xY2pQs",
+            authDomain: "tictactoe-online-game.firebaseapp.com",
+            projectId: "tictactoe-online-game",
+            storageBucket: "tictactoe-online-game.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdef1234567890"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
         let gameState = {
             gameCode: null,
             playerName: '',
@@ -430,7 +463,7 @@
             currentPlayer: 'X',
             gameActive: false,
             isMyTurn: false,
-            lastUpdate: 0
+            gameRef: null
         };
 
         const winningConditions = [
@@ -448,10 +481,19 @@
             return Math.random().toString(36).substring(2, 8).toUpperCase();
         }
 
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
         function createGame() {
             const name = document.getElementById('playerName').value.trim();
             if (!name) {
-                alert('Please enter your name');
+                showError('Please enter your name');
                 return;
             }
 
@@ -461,17 +503,26 @@
             gameState.isMyTurn = true;
             gameState.gameActive = true;
 
-            // Save game to localStorage
-            saveGame();
+            const gameData = {
+                playerX: name,
+                playerO: '',
+                board: gameState.gameBoard,
+                currentPlayer: 'X',
+                gameActive: true,
+                createdAt: new Date().getTime()
+            };
 
-            showGameScreen();
-            updatePlayerInfo();
-            document.getElementById('gameCodeDisplay').textContent = gameState.gameCode;
-            document.getElementById('copyCodeDiv').style.display = 'block';
-            document.getElementById('waitingDiv').style.display = 'block';
-
-            // Start polling for opponent
-            pollForOpponent();
+            gameState.gameRef = db.ref('games/' + gameState.gameCode);
+            gameState.gameRef.set(gameData).then(() => {
+                showGameScreen();
+                updatePlayerInfo();
+                document.getElementById('gameCodeDisplay').textContent = gameState.gameCode;
+                document.getElementById('copyCodeDiv').style.display = 'block';
+                document.getElementById('waitingDiv').style.display = 'block';
+                listenForOpponent();
+            }).catch(err => {
+                showError('Failed to create game: ' + err.message);
+            });
         }
 
         function toggleJoinGame() {
@@ -484,85 +535,76 @@
             const code = document.getElementById('gameCode').value.trim().toUpperCase();
 
             if (!name) {
-                alert('Please enter your name');
+                showError('Please enter your name');
                 return;
             }
 
             if (!code || code.length !== 6) {
-                alert('Please enter a valid 6-character game code');
+                showError('Please enter a valid 6-character game code');
                 return;
             }
 
-            const creatorGame = localStorage.getItem(`game_${code}`);
-            if (!creatorGame) {
-                alert('Game code not found. Make sure the code is correct.');
-                return;
-            }
-
-            const creatorData = JSON.parse(creatorGame);
             gameState.playerName = name;
             gameState.gameCode = code;
             gameState.playerSymbol = 'O';
-            gameState.opponentName = creatorData.playerName;
             gameState.isMyTurn = false;
-            gameState.gameActive = true;
 
-            // Update the creator's game
-            creatorData.opponentName = name;
-            localStorage.setItem(`game_${code}`, JSON.stringify(creatorData));
+            gameState.gameRef = db.ref('games/' + code);
+            gameState.gameRef.once('value').then(snapshot => {
+                if (!snapshot.exists()) {
+                    showError('Game code not found. Make sure the code is correct.');
+                    return;
+                }
 
-            saveGame();
-            showGameScreen();
-            updatePlayerInfo();
-            document.getElementById('copyCodeDiv').style.display = 'none';
-            pollForGameUpdates();
+                const gameData = snapshot.val();
+                gameState.opponentName = gameData.playerX;
+                gameState.gameBoard = gameData.board;
+                gameState.currentPlayer = gameData.currentPlayer;
+                gameState.gameActive = gameData.gameActive;
+
+                // Update the game with player O
+                gameState.gameRef.update({
+                    playerO: name
+                }).then(() => {
+                    showGameScreen();
+                    updatePlayerInfo();
+                    document.getElementById('copyCodeDiv').style.display = 'none';
+                    listenForGameUpdates();
+                }).catch(err => {
+                    showError('Failed to join game: ' + err.message);
+                });
+            }).catch(err => {
+                showError('Error: ' + err.message);
+            });
         }
 
-        function pollForOpponent() {
-            const interval = setInterval(() => {
-                const gameData = localStorage.getItem(`game_${gameState.gameCode}`);
-                if (gameData) {
-                    const data = JSON.parse(gameData);
-                    if (data.opponentName) {
-                        gameState.opponentName = data.opponentName;
-                        updatePlayerInfo();
-                        document.getElementById('waitingDiv').style.display = 'none';
-                        clearInterval(interval);
-                        pollForGameUpdates();
-                    }
+        function listenForOpponent() {
+            gameState.gameRef.on('value', snapshot => {
+                const data = snapshot.val();
+                if (data && data.playerO) {
+                    gameState.opponentName = data.playerO;
+                    updatePlayerInfo();
+                    document.getElementById('waitingDiv').style.display = 'none';
                 }
+            });
+
+            setTimeout(() => {
+                listenForGameUpdates();
             }, 1000);
         }
 
-        function pollForGameUpdates() {
-            setInterval(() => {
-                const gameData = localStorage.getItem(`game_${gameState.gameCode}`);
-                if (gameData) {
-                    const data = JSON.parse(gameData);
-                    if (data.lastUpdate > gameState.lastUpdate) {
-                        gameState.gameBoard = data.gameBoard;
-                        gameState.currentPlayer = data.currentPlayer;
-                        gameState.isMyTurn = (gameState.playerSymbol === gameState.currentPlayer);
-                        gameState.lastUpdate = data.lastUpdate;
-                        renderBoard();
-                        updateStatus();
-                    }
+        function listenForGameUpdates() {
+            gameState.gameRef.on('value', snapshot => {
+                const data = snapshot.val();
+                if (data) {
+                    gameState.gameBoard = data.board;
+                    gameState.currentPlayer = data.currentPlayer;
+                    gameState.gameActive = data.gameActive;
+                    gameState.isMyTurn = (gameState.playerSymbol === gameState.currentPlayer);
+                    renderBoard();
+                    updateStatus();
                 }
-            }, 500);
-        }
-
-        function saveGame() {
-            const gameData = {
-                playerName: gameState.playerName,
-                opponentName: gameState.opponentName,
-                playerSymbol: gameState.playerSymbol,
-                gameBoard: gameState.gameBoard,
-                currentPlayer: gameState.currentPlayer,
-                gameActive: gameState.gameActive,
-                lastUpdate: Date.now()
-            };
-            localStorage.setItem(`game_${gameState.gameCode}`, JSON.stringify(gameData));
-            gameState.lastUpdate = Date.now();
+            });
         }
 
         function showGameScreen() {
@@ -583,23 +625,25 @@
 
         function handleCellClick(e) {
             const cell = e.target;
-            const index = cell.getAttribute('data-index');
+            const index = parseInt(cell.getAttribute('data-index'));
 
             if (!gameState.isMyTurn || !gameState.gameActive || gameState.gameBoard[index] !== '') {
-                alert('Not your turn or cell already taken!');
+                showError('Not your turn or cell already taken!');
                 return;
             }
 
             gameState.gameBoard[index] = gameState.playerSymbol;
-            saveGame();
-
             checkGameStatus();
+
+            const nextPlayer = gameState.playerSymbol === 'X' ? 'O' : 'X';
+            gameState.gameRef.update({
+                board: gameState.gameBoard,
+                currentPlayer: nextPlayer,
+                gameActive: gameState.gameActive
+            });
+
             renderBoard();
             updateStatus();
-
-            gameState.currentPlayer = gameState.playerSymbol === 'X' ? 'O' : 'X';
-            gameState.isMyTurn = false;
-            saveGame();
         }
 
         function checkGameStatus() {
@@ -615,16 +659,8 @@
                 }
             }
 
-            if (hasWon) {
+            if (hasWon || gameState.gameBoard.every(cell => cell !== '')) {
                 gameState.gameActive = false;
-                saveGame();
-                return;
-            }
-
-            if (gameState.gameBoard.every(cell => cell !== '')) {
-                gameState.gameActive = false;
-                saveGame();
-                return;
             }
         }
 
@@ -688,10 +724,16 @@
 
         function resetGame() {
             gameState.gameBoard = ['', '', '', '', '', '', '', '', ''];
-            gameState.currentPlayer = 'X';
             gameState.gameActive = true;
             gameState.isMyTurn = (gameState.playerSymbol === 'X');
-            saveGame();
+            gameState.currentPlayer = 'X';
+            
+            gameState.gameRef.update({
+                board: gameState.gameBoard,
+                currentPlayer: 'X',
+                gameActive: true
+            });
+
             renderBoard();
             updateStatus();
         }
@@ -705,7 +747,9 @@
 
         function backToMenu() {
             if (confirm('Are you sure? This will end the game.')) {
-                localStorage.removeItem(`game_${gameState.gameCode}`);
+                if (gameState.gameRef) {
+                    gameState.gameRef.off();
+                }
                 gameState = {
                     gameCode: null,
                     playerName: '',
@@ -715,7 +759,7 @@
                     currentPlayer: 'X',
                     gameActive: false,
                     isMyTurn: false,
-                    lastUpdate: 0
+                    gameRef: null
                 };
                 document.getElementById('setupScreen').classList.remove('hidden');
                 document.getElementById('gameScreen').classList.remove('active');
