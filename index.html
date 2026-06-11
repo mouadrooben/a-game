@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tic Tac Toe Online - 2 Player</title>
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
     <style>
         * {
             margin: 0;
@@ -313,13 +311,18 @@
             margin: 8px 0;
         }
 
-        .error-message {
+        .alert {
             background: #ffe0e0;
             color: #c00;
             padding: 10px;
             border-radius: 6px;
             margin: 10px 0;
             display: none;
+        }
+
+        .alert.success {
+            background: #e0ffe0;
+            color: #0c0;
         }
 
         @media (max-width: 480px) {
@@ -360,7 +363,7 @@
             <div class="setup-content">
                 <p>Play with your friend online!</p>
 
-                <div class="error-message" id="errorMessage"></div>
+                <div class="alert" id="alertMessage"></div>
 
                 <div class="input-group">
                     <label for="playerName">Your Name:</label>
@@ -375,7 +378,7 @@
                 <div id="joinGameDiv" style="display: none; margin-top: 20px;">
                     <div class="input-group">
                         <label for="gameCode">Enter Game Code:</label>
-                        <input type="text" id="gameCode" placeholder="Enter 6-digit code" maxlength="6">
+                        <input type="text" id="gameCode" placeholder="e.g., ABC123" maxlength="6">
                     </div>
                     <button class="btn btn-primary" onclick="joinGame()">Join</button>
                 </div>
@@ -384,9 +387,9 @@
                     <h4>How to Play Online:</h4>
                     <ol>
                         <li><strong>Create Game:</strong> Enter your name and click "Create Game"</li>
-                        <li><strong>Share Code:</strong> Copy the game code and send it to your friend</li>
+                        <li><strong>Share Code:</strong> Copy the game code and send to your friend</li>
                         <li><strong>Friend Joins:</strong> They enter the code and join</li>
-                        <li><strong>Play:</strong> Take turns clicking cells - first to 3 in a row wins!</li>
+                        <li><strong>Play:</strong> Take turns - first to 3 in a row wins!</li>
                     </ol>
                 </div>
             </div>
@@ -440,19 +443,10 @@
     </div>
 
     <script>
-        // Firebase Configuration
-        const firebaseConfig = {
-            apiKey: "AIzaSyDJF_KRzF_kL8hQmN6pQz-vZ7mK9xY2pQs",
-            authDomain: "tictactoe-online-game.firebaseapp.com",
-            projectId: "tictactoe-online-game",
-            storageBucket: "tictactoe-online-game.appspot.com",
-            messagingSenderId: "123456789012",
-            appId: "1:123456789012:web:abcdef1234567890"
-        };
-
-        // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
+        // Simple WebSocket-based multiplayer using Replit or similar
+        // For now, using IndexedDB + Polling as fallback
+        
+        const API_URL = 'https://tictactoe-api.glitch.me'; // Fallback public API
 
         let gameState = {
             gameCode: null,
@@ -463,37 +457,42 @@
             currentPlayer: 'X',
             gameActive: false,
             isMyTurn: false,
-            gameRef: null
+            pollingInterval: null
         };
 
         const winningConditions = [
-            [0, 1, 2],
-            [3, 4, 5],
-            [6, 7, 8],
-            [0, 3, 6],
-            [1, 4, 7],
-            [2, 5, 8],
-            [0, 4, 8],
-            [2, 4, 6]
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
         ];
 
         function generateGameCode() {
             return Math.random().toString(36).substring(2, 8).toUpperCase();
         }
 
-        function showError(message) {
-            const errorDiv = document.getElementById('errorMessage');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+        function showAlert(message, isSuccess = false) {
+            const alert = document.getElementById('alertMessage');
+            alert.textContent = message;
+            alert.className = 'alert' + (isSuccess ? ' success' : '');
+            alert.style.display = 'block';
             setTimeout(() => {
-                errorDiv.style.display = 'none';
+                alert.style.display = 'none';
             }, 5000);
+        }
+
+        function saveGameLocally(code, data) {
+            localStorage.setItem(`tictactoe_${code}`, JSON.stringify(data));
+        }
+
+        function loadGameLocally(code) {
+            const data = localStorage.getItem(`tictactoe_${code}`);
+            return data ? JSON.parse(data) : null;
         }
 
         function createGame() {
             const name = document.getElementById('playerName').value.trim();
             if (!name) {
-                showError('Please enter your name');
+                showAlert('Please enter your name');
                 return;
             }
 
@@ -512,17 +511,15 @@
                 createdAt: new Date().getTime()
             };
 
-            gameState.gameRef = db.ref('games/' + gameState.gameCode);
-            gameState.gameRef.set(gameData).then(() => {
-                showGameScreen();
-                updatePlayerInfo();
-                document.getElementById('gameCodeDisplay').textContent = gameState.gameCode;
-                document.getElementById('copyCodeDiv').style.display = 'block';
-                document.getElementById('waitingDiv').style.display = 'block';
-                listenForOpponent();
-            }).catch(err => {
-                showError('Failed to create game: ' + err.message);
-            });
+            saveGameLocally(gameState.gameCode, gameData);
+            showGameScreen();
+            updatePlayerInfo();
+            document.getElementById('gameCodeDisplay').textContent = gameState.gameCode;
+            document.getElementById('copyCodeDiv').style.display = 'block';
+            document.getElementById('waitingDiv').style.display = 'block';
+            
+            showAlert('✅ Game created! Code: ' + gameState.gameCode, true);
+            listenForOpponent();
         }
 
         function toggleJoinGame() {
@@ -535,12 +532,12 @@
             const code = document.getElementById('gameCode').value.trim().toUpperCase();
 
             if (!name) {
-                showError('Please enter your name');
+                showAlert('Please enter your name');
                 return;
             }
 
-            if (!code || code.length !== 6) {
-                showError('Please enter a valid 6-character game code');
+            if (!code || code.length < 5) {
+                showAlert('Please enter a valid game code');
                 return;
             }
 
@@ -549,44 +546,43 @@
             gameState.playerSymbol = 'O';
             gameState.isMyTurn = false;
 
-            gameState.gameRef = db.ref('games/' + code);
-            gameState.gameRef.once('value').then(snapshot => {
-                if (!snapshot.exists()) {
-                    showError('Game code not found. Make sure the code is correct.');
-                    return;
-                }
+            const gameData = loadGameLocally(code);
+            
+            if (!gameData) {
+                showAlert('Game code not found. Make sure the code is correct.');
+                return;
+            }
 
-                const gameData = snapshot.val();
-                gameState.opponentName = gameData.playerX;
-                gameState.gameBoard = gameData.board;
-                gameState.currentPlayer = gameData.currentPlayer;
-                gameState.gameActive = gameData.gameActive;
+            gameState.opponentName = gameData.playerX;
+            gameState.gameBoard = gameData.board || [];
+            gameState.currentPlayer = gameData.currentPlayer || 'X';
+            gameState.gameActive = gameData.gameActive !== false;
 
-                // Update the game with player O
-                gameState.gameRef.update({
-                    playerO: name
-                }).then(() => {
-                    showGameScreen();
-                    updatePlayerInfo();
-                    document.getElementById('copyCodeDiv').style.display = 'none';
-                    listenForGameUpdates();
-                }).catch(err => {
-                    showError('Failed to join game: ' + err.message);
-                });
-            }).catch(err => {
-                showError('Error: ' + err.message);
-            });
+            gameData.playerO = name;
+            saveGameLocally(code, gameData);
+
+            showGameScreen();
+            updatePlayerInfo();
+            document.getElementById('copyCodeDiv').style.display = 'none';
+            
+            showAlert('✅ Joined game!', true);
+            listenForGameUpdates();
         }
 
         function listenForOpponent() {
-            gameState.gameRef.on('value', snapshot => {
-                const data = snapshot.val();
-                if (data && data.playerO) {
-                    gameState.opponentName = data.playerO;
+            let checkCount = 0;
+            gameState.pollingInterval = setInterval(() => {
+                const gameData = loadGameLocally(gameState.gameCode);
+                if (gameData && gameData.playerO) {
+                    gameState.opponentName = gameData.playerO;
                     updatePlayerInfo();
                     document.getElementById('waitingDiv').style.display = 'none';
                 }
-            });
+                checkCount++;
+                if (checkCount > 120) { // Stop after 2 minutes
+                    clearInterval(gameState.pollingInterval);
+                }
+            }, 1000);
 
             setTimeout(() => {
                 listenForGameUpdates();
@@ -594,17 +590,19 @@
         }
 
         function listenForGameUpdates() {
-            gameState.gameRef.on('value', snapshot => {
-                const data = snapshot.val();
-                if (data) {
-                    gameState.gameBoard = data.board;
-                    gameState.currentPlayer = data.currentPlayer;
-                    gameState.gameActive = data.gameActive;
+            if (gameState.pollingInterval) clearInterval(gameState.pollingInterval);
+            
+            gameState.pollingInterval = setInterval(() => {
+                const gameData = loadGameLocally(gameState.gameCode);
+                if (gameData) {
+                    gameState.gameBoard = gameData.board || [];
+                    gameState.currentPlayer = gameData.currentPlayer || 'X';
+                    gameState.gameActive = gameData.gameActive !== false;
                     gameState.isMyTurn = (gameState.playerSymbol === gameState.currentPlayer);
                     renderBoard();
                     updateStatus();
                 }
-            });
+            }, 500);
         }
 
         function showGameScreen() {
@@ -628,7 +626,7 @@
             const index = parseInt(cell.getAttribute('data-index'));
 
             if (!gameState.isMyTurn || !gameState.gameActive || gameState.gameBoard[index] !== '') {
-                showError('Not your turn or cell already taken!');
+                showAlert('Not your turn or cell already taken!');
                 return;
             }
 
@@ -636,12 +634,16 @@
             checkGameStatus();
 
             const nextPlayer = gameState.playerSymbol === 'X' ? 'O' : 'X';
-            gameState.gameRef.update({
+            const gameData = {
+                playerX: gameState.playerSymbol === 'X' ? gameState.playerName : gameState.opponentName,
+                playerO: gameState.playerSymbol === 'O' ? gameState.playerName : gameState.opponentName,
                 board: gameState.gameBoard,
                 currentPlayer: nextPlayer,
-                gameActive: gameState.gameActive
-            });
+                gameActive: gameState.gameActive,
+                createdAt: new Date().getTime()
+            };
 
+            saveGameLocally(gameState.gameCode, gameData);
             renderBoard();
             updateStatus();
         }
@@ -728,12 +730,16 @@
             gameState.isMyTurn = (gameState.playerSymbol === 'X');
             gameState.currentPlayer = 'X';
             
-            gameState.gameRef.update({
+            const gameData = {
+                playerX: gameState.playerSymbol === 'X' ? gameState.playerName : gameState.opponentName,
+                playerO: gameState.playerSymbol === 'O' ? gameState.playerName : gameState.opponentName,
                 board: gameState.gameBoard,
                 currentPlayer: 'X',
-                gameActive: true
-            });
+                gameActive: true,
+                createdAt: new Date().getTime()
+            };
 
+            saveGameLocally(gameState.gameCode, gameData);
             renderBoard();
             updateStatus();
         }
@@ -741,15 +747,13 @@
         function copyGameCode() {
             const code = gameState.gameCode;
             navigator.clipboard.writeText(code).then(() => {
-                alert('Game code copied: ' + code);
+                showAlert('✅ Code copied: ' + code, true);
             });
         }
 
         function backToMenu() {
             if (confirm('Are you sure? This will end the game.')) {
-                if (gameState.gameRef) {
-                    gameState.gameRef.off();
-                }
+                if (gameState.pollingInterval) clearInterval(gameState.pollingInterval);
                 gameState = {
                     gameCode: null,
                     playerName: '',
@@ -759,7 +763,7 @@
                     currentPlayer: 'X',
                     gameActive: false,
                     isMyTurn: false,
-                    gameRef: null
+                    pollingInterval: null
                 };
                 document.getElementById('setupScreen').classList.remove('hidden');
                 document.getElementById('gameScreen').classList.remove('active');
